@@ -1,0 +1,28 @@
+[project]
+name = "regression-guard"
+version = "0.1.0"
+description = "CI/CD-style regression detection for LLM features"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "groq>=0.11.0",
+    "pydantic>=2.7.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+    "click>=8.1.0",
+    "jinja2>=3.1.0",
+    "rich>=13.7.0",
+]
+
+[project.scripts]
+regression-guard = "regression_guard.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+regression_guard = ["templates/*.j2"]

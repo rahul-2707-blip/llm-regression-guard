@@ -1,0 +1,103 @@
+name: LLM Prompt Eval
+
+on:
+  pull_request:
+    paths:
+      - "prompts/**"
+      - "golden_dataset/**"
+      - "src/regression_guard/**"
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: "Prompt name (e.g. email_classifier_v1)"
+        required: true
+        default: "email_classifier_v1"
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Detect changed prompt(s)
+        id: prompts
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "names=${{ inputs.prompt }}" >> "$GITHUB_OUTPUT"
+          else
+            changed=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- 'prompts/*.yaml' | xargs -I{} basename {} .yaml | tr '\n' ' ')
+            if [ -z "$changed" ]; then
+              changed="email_classifier_v1"
+            fi
+            echo "names=$changed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run eval
+        id: eval
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set +e
+          last_status=0
+          for name in ${{ steps.prompts.outputs.names }}; do
+            echo "=== Evaluating $name ==="
+            python -m regression_guard evaluate --prompt "$name" --concurrency 2 --fail-on critical
+            status=$?
+            if [ $status -ne 0 ]; then last_status=$status; fi
+          done
+          echo "status=$last_status" >> "$GITHUB_OUTPUT"
+          exit 0  # don't fail here — we report via PR comment first
+
+      - name: Upload report artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-reports
+          path: reports/*.html
+          retention-days: 30
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const reports = fs.readdirSync('reports').filter(f => f.endsWith('.html'));
+            const body = [
+              '## LLM Prompt Eval Results',
+              '',
+              `Eval ran on **${reports.length}** prompt config(s). Download artifacts to view the full HTML diff.`,
+              '',
+              `Status: ${ '${{ steps.eval.outputs.status }}' === '0' ? '✅ pass' : '❌ regression detected' }`,
+              '',
+              'Reports: ' + reports.map(r => `\`${r}\``).join(', '),
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Fail if regression
+        if: steps.eval.outputs.status != '0'
+        run: |
+          echo "::error::Critical regression detected — blocking merge"
+          exit 1

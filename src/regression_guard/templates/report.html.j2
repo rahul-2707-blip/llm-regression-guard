@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Eval Report — {{ run.prompt_fingerprint }}</title>
+<style>
+  body { font: 14px/1.5 -apple-system, system-ui, sans-serif; max-width: 1100px; margin: 32px auto; padding: 0 24px; color: #111; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .meta { color: #666; font-size: 13px; margin-bottom: 24px; }
+  .scorecard { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 20px 0; }
+  .card { padding: 14px 16px; border: 1px solid #e2e2e2; border-radius: 8px; background: #fafafa; }
+  .card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #777; }
+  .card .value { font-size: 22px; font-weight: 600; margin-top: 4px; }
+  .delta-pos { color: #15803d; } .delta-neg { color: #b91c1c; } .delta-neu { color: #555; }
+  .severity { display: inline-block; padding: 4px 10px; border-radius: 4px; font-weight: 600; font-size: 12px; }
+  .severity.pass { background: #dcfce7; color: #166534; }
+  .severity.warn { background: #fef3c7; color: #92400e; }
+  .severity.critical { background: #fee2e2; color: #991b1b; }
+  table { border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; vertical-align: top; }
+  th { background: #f7f7f7; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #555; }
+  pre { background: #f5f5f5; padding: 8px; border-radius: 4px; white-space: pre-wrap; word-break: break-word; font-size: 12px; margin: 0; }
+  .section { margin-top: 32px; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.05em; color: #555; margin-bottom: 8px; }
+  canvas { max-width: 100%; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+<h1>{{ headline }}</h1>
+<div class="meta">
+  Run <code>{{ run.run_id }}</code> · {{ run.prompt_fingerprint }} ·
+  {{ run.timestamp.strftime('%Y-%m-%d %H:%M UTC') }}
+  {% if diff %} · <span class="severity {{ diff.severity }}">{{ diff.severity|upper }}</span>{% endif %}
+</div>
+
+<div class="scorecard">
+  <div class="card">
+    <div class="label">Overall accuracy</div>
+    <div class="value">{{ '%.1f' % (run.overall_accuracy * 100) }}%</div>
+    {% if diff %}<div class="{{ 'delta-pos' if diff.overall_accuracy_delta_pct >= 0 else 'delta-neg' }}">
+      {{ '%+.1f' % diff.overall_accuracy_delta_pct }}% vs baseline
+    </div>{% endif %}
+  </div>
+  <div class="card">
+    <div class="label">Mean summary score</div>
+    <div class="value">{{ '%.2f' % run.mean_summary_score }} / 5</div>
+    {% if diff %}<div class="{{ 'delta-pos' if diff.summary_score_delta >= 0 else 'delta-neg' }}">
+      {{ '%+.2f' % diff.summary_score_delta }}
+    </div>{% endif %}
+  </div>
+  <div class="card">
+    <div class="label">Mean latency</div>
+    <div class="value">{{ '%.0f' % run.mean_latency_ms }} ms</div>
+    {% if diff %}<div class="{{ 'delta-neg' if diff.latency_delta_ms > 0 else 'delta-pos' }}">
+      {{ '%+.0f' % diff.latency_delta_ms }} ms
+    </div>{% endif %}
+  </div>
+  <div class="card">
+    <div class="label">Cases run</div>
+    <div class="value">{{ run.case_results|length }}</div>
+  </div>
+</div>
+
+{% if trend_data %}
+<div class="section">
+  <h2>Accuracy trend (last {{ trend_data|length }} runs)</h2>
+  <canvas id="trend" height="100"></canvas>
+  <script>
+    new Chart(document.getElementById('trend'), {
+      type: 'line',
+      data: {
+        labels: {{ trend_labels|tojson }},
+        datasets: [{
+          label: 'Accuracy %',
+          data: {{ trend_data|tojson }},
+          borderColor: '#2563eb',
+          backgroundColor: 'rgba(37,99,235,0.1)',
+          fill: true,
+          tension: 0.3,
+        }]
+      },
+      options: { scales: { y: { min: 0, max: 100 } } }
+    });
+  </script>
+</div>
+{% endif %}
+
+{% if diff and diff.regressions %}
+<div class="section">
+  <h2>Regressions ({{ diff.regressions|length }})</h2>
+  <table>
+    <tr><th>Case</th><th>Old output</th><th>New output</th></tr>
+    {% for r in diff.regressions %}
+    <tr>
+      <td><code>{{ r.case_id }}</code></td>
+      <td><pre>{{ r.old_output }}</pre></td>
+      <td><pre>{{ r.new_output }}</pre></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+{% if diff and diff.improvements %}
+<div class="section">
+  <h2>Improvements ({{ diff.improvements|length }})</h2>
+  <table>
+    <tr><th>Case</th><th>Old output</th><th>New output</th></tr>
+    {% for r in diff.improvements %}
+    <tr>
+      <td><code>{{ r.case_id }}</code></td>
+      <td><pre>{{ r.old_output }}</pre></td>
+      <td><pre>{{ r.new_output }}</pre></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+{% if diff %}
+<div class="section">
+  <h2>Per-category accuracy delta</h2>
+  <table>
+    <tr><th>Category</th><th>Delta</th></tr>
+    {% for cat, d in diff.per_category_accuracy_delta.items() %}
+    <tr>
+      <td>{{ cat }}</td>
+      <td class="{{ 'delta-pos' if d >= 0 else 'delta-neg' }}">{{ '%+.1f' % d }}%</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<div class="section">
+  <h2>All cases</h2>
+  <table>
+    <tr><th>Case</th><th>Match</th><th>Summary score</th><th>Latency</th><th>Output</th></tr>
+    {% for r in run.case_results %}
+    <tr>
+      <td><code>{{ r.case_id }}</code></td>
+      <td>{{ '✓' if r.category_match else '✗' }}</td>
+      <td>{{ r.summary_score or '—' }}</td>
+      <td>{{ r.latency_ms }} ms</td>
+      <td><pre>{{ r.parsed.model_dump_json() if r.parsed else (r.parse_error or 'no output') }}</pre></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+</body>
+</html>
