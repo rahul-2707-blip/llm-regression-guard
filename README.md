@@ -86,6 +86,21 @@ Push to GitHub with `GROQ_API_KEY` and `SLACK_WEBHOOK_URL` as repo secrets. The 
 - GitHub Actions (CI)
 - Slack incoming webhooks (alerts)
 
+## Design rationale (one I'm proud of)
+
+**Why slow-drift detection is separate from per-run regression detection.**
+
+The obvious approach is a single threshold: "if accuracy drops by N% vs the previous run, alert." That catches sudden breaks — someone ships a bad prompt, every case fails, alarm fires. But it misses the more dangerous failure mode: **gradual rot.**
+
+Imagine accuracy drops 0.5% per week for 12 weeks. No single PR ever triggers a threshold, but the system is now 6% worse than three months ago. The team has no idea, because every individual change "looked fine."
+
+So this project tracks two signals independently:
+
+1. **Per-run delta** — short-horizon. Compares the latest run to the immediately previous run. Catches sudden breaks. Configurable warn at 3%, critical at 8%.
+2. **Slow drift** — long-horizon. Compares the 7-run trailing mean to an older baseline (runs 8–14). Catches gradual degradation that per-run checks never see. Fires a "slow drift" warning even when no single run looks bad.
+
+This mirrors how production monitoring works (request-level alerts vs. SLO burn-rate alerts) and is the kind of thinking that distinguishes someone who has actually run production AI from someone who has just integrated an API.
+
 ## Interview talking points
 
 1. **Why the golden dataset matters.** Evaluation quality is bounded by data quality. The dataset is hand-labeled (no LLM-generated ground truth), deliberately includes edge cases (multilingual, sarcasm, multi-intent, typos), and tags each case with difficulty so you can track regression patterns by complexity.
